@@ -14,6 +14,7 @@ FPGA_DIR="${HOME}/LibreSDR_UHD_B220_Mini_FPGA"
 INSTALL_DIR="${HOME}/.local/lib/b220-capture"
 BIN_DIR="${HOME}/.local/bin"
 CAPTURE_DIR="${HOME}/sdr-captures"
+DOWNLOADER_VENV="${HOME}/.local/share/uhd-downloader-venv"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
@@ -56,8 +57,22 @@ log "Installing UHD and build dependencies with Homebrew (no Conda/Radioconda)"
 brew update
 brew install uhd boost cmake pkgconf
 
+log "Preparing an isolated Python environment for the UHD image downloader"
+# Homebrew's generated uhd_images_downloader launcher can contain a shebang
+# pointing into a temporary build directory. Invoke the script with a stable
+# virtual-environment interpreter instead, and install its missing requests
+# dependency there (without modifying Homebrew's externally-managed Python).
+BREW_PYTHON="$(command -v python3 || true)"
+[[ -n "$BREW_PYTHON" && -x "$BREW_PYTHON" ]] || die "Python 3 was not found after loading Homebrew. Check the Homebrew UHD installation."
+[[ "$BREW_PYTHON" == "${BREW_PREFIX}"/* ]] || die "Expected Homebrew-managed Python, but found: $BREW_PYTHON"
+mkdir -p "$(dirname "$DOWNLOADER_VENV")"
+if [[ ! -x "${DOWNLOADER_VENV}/bin/python" ]]; then
+  "$BREW_PYTHON" -m venv "$DOWNLOADER_VENV"
+fi
+"${DOWNLOADER_VENV}/bin/python" -m pip install --disable-pip-version-check requests
+
 log "Downloading standard UHD firmware/images"
-"$(brew --prefix)/bin/uhd_images_downloader"
+"${DOWNLOADER_VENV}/bin/python" "$(brew --prefix)/bin/uhd_images_downloader"
 
 log "Installing UHD USB permissions rule"
 RULE_URL="https://raw.githubusercontent.com/EttusResearch/uhd/v${UHD_VERSION}/host/utils/uhd-usrp.rules"
@@ -108,6 +123,8 @@ cmake -S "$INSTALL_DIR" -B "$BUILD" \
   -DCMAKE_PREFIX_PATH="${BREW_PREFIX_NOW};$(brew --prefix uhd);$(brew --prefix boost)"
 cmake --build "$BUILD" --parallel 2
 [[ -x "${BUILD}/rx_samples_to_file" ]] || die "Failed to build rx_samples_to_file."
+
+[[ -f "${REPO_DIR}/collect.sh" ]] || die "collect.sh was not found in the repository directory: ${REPO_DIR}"
 
 log "Installing capture command"
 install -m 0755 "${REPO_DIR}/collect.sh" "${BIN_DIR}/b220-capture"
