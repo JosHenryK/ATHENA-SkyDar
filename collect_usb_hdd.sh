@@ -6,7 +6,14 @@ FREQ="${1:-5.1e9}"
 RATE="${2:-2e5}"
 GAIN="${3:-20}"
 DURATION="${4:-10}"
-OUTDIR="${B220_CAPTURE_DIR:-${HOME}/sdr-captures}"
+# Store captures on the attached USB HDD at the same mount point used by
+# the two-SDR collection script. Override B220_USB_MOUNT if mounted elsewhere.
+USB_MOUNT="${B220_USB_MOUNT:-/mnt/usb-hdd}"
+mountpoint -q "$USB_MOUNT" || {
+  printf 'ERROR: USB HDD is not mounted at %s. Mount it first, or set B220_USB_MOUNT.\\n' "$USB_MOUNT" >&2
+  exit 1
+}
+OUTDIR="${B220_CAPTURE_DIR:-${USB_MOUNT}/sdr-captures}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT="${OUTDIR}/b220_${STAMP}.iq"
 INSTALL_DIR="${HOME}/.local/lib/b220-capture"
@@ -27,7 +34,7 @@ echo "Frequency: $FREQ Hz"
 echo "Sample rate: $RATE samples/s"
 echo "Gain: $GAIN dB"
 echo "Duration: $DURATION seconds"
-echo "Output: $OUT"
+echo "USB HDD mount point: $USB_MOUNT"\necho "Output: $OUT"
 
 "$RX_BIN" \
   --freq "$FREQ" \
