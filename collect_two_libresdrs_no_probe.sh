@@ -41,24 +41,24 @@ for v in "$FREQ" "$RATE" "$GAIN" "$DURATION"; do
 done
 
 UHD_FIND="$(find_tool uhd_find_devices)" || die "uhd_find_devices not found. Ensure UHD is installed and on PATH."
-UHD_PROBE="$(find_tool uhd_usrp_probe)" || die "uhd_usrp_probe not found. Ensure UHD is installed and on PATH."
-
 echo "=== Attached UHD SDR diagnostic ==="
-"$UHD_FIND" || die "uhd_find_devices failed. Check USB connections and UHD installation."
+# Capture the normal, no-arguments discovery output. This is the discovery
+# method confirmed to work on this host; do not run uhd_usrp_probe with
+# serial-specific arguments, which currently fails on this setup.
+DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
+printf '%s\n' "$DEVICE_LIST"
 echo
-read -r -p "Serial number for SDR 1: " SERIAL1
-read -r -p "Serial number for SDR 2: " SERIAL2
+read -r -p "Serial number for SDR 1 (as listed above): " SERIAL1
+read -r -p "Serial number for SDR 2 (as listed above): " SERIAL2
 
 [[ -n "$SERIAL1" ]] || die "SDR 1 serial number cannot be empty."
 [[ -n "$SERIAL2" ]] || die "SDR 2 serial number cannot be empty."
 [[ "$SERIAL1" != "$SERIAL2" ]] || die "Choose two different serial numbers."
 
-echo
-echo "=== Diagnostic for SDR 1 (serial=$SERIAL1) ==="
-"$UHD_PROBE" --args="serial=$SERIAL1" || die "Probe failed for SDR 1 ($SERIAL1). Check the serial number and connection."
-echo
-echo "=== Diagnostic for SDR 2 (serial=$SERIAL2) ==="
-"$UHD_PROBE" --args="serial=$SERIAL2" || die "Probe failed for SDR 2 ($SERIAL2). Check the serial number and connection."
+# Confirm both selected serials appear in the successful discovery listing.
+# This avoids the failing serial-specific uhd_usrp_probe calls.
+grep -Fq "serial: $SERIAL1" <<< "$DEVICE_LIST" || die "SDR 1 serial '$SERIAL1' was not listed by uhd_find_devices."
+grep -Fq "serial: $SERIAL2" <<< "$DEVICE_LIST" || die "SDR 2 serial '$SERIAL2' was not listed by uhd_find_devices."
 
 mkdir -p "$COLLECT_DIR"
 
