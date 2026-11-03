@@ -2,18 +2,17 @@
 set -Eeuo pipefail
 
 # Usage:
-#   collect_singlesdr_singlechannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>
+#   collect_singlesdr_singlechannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
 usage() {
-  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>\n' "${0##*/}" >&2
+  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>\n' "${0##*/}" >&2
   exit 2
 }
 
-[[ "$#" -eq 5 ]] || usage
+[[ "$#" -eq 4 ]] || usage
 FREQ="$1"
 RATE="$2"
 GAIN="$3"
 DURATION="$4"
-SDR_NAME="$5"
 # Store captures on the attached USB HDD at the same mount point used by
 # the two-SDR collection script. Override B220_USB_MOUNT if mounted elsewhere.
 USB_MOUNT="${B220_USB_MOUNT:-/mnt/usb-hdd}"
@@ -61,11 +60,11 @@ done
 
 UHD_FIND="$(find_tool uhd_find_devices)" || die "uhd_find_devices not found. Ensure UHD is installed and on PATH."
 echo "=== Attached UHD SDR diagnostic ==="
-# Use ordinary discovery and select by EEPROM name. Serial-filtered probes are
-# unreliable for these LibreSDRs, while their names are valid UHD selectors.
+# Use ordinary discovery and select by the EEPROM name displayed there.
 DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
 printf '%s\n' "$DEVICE_LIST"
 echo
+read -r -p "Name for SDR (as listed above): " SDR_NAME
 [[ -n "$SDR_NAME" ]] || die "SDR name cannot be empty."
 grep -Fq "name: $SDR_NAME" <<< "$DEVICE_LIST" || die "SDR name '$SDR_NAME' was not listed by uhd_find_devices."
 

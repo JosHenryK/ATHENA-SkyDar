@@ -51,14 +51,14 @@ Replace `<sdr_name>` with an EEPROM name visible in the discovery listing.
 ## Start a capture locally
 
 ```bash
-~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>
+~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
 ```
 
-All collection parameters are required at runtime: frequency in Hz, sample rate in samples/second, gain in dB, duration in seconds, followed by the EEPROM SDR name(s). The dual-SDR commands take `<sdr1_name> <sdr2_name>` after the first four parameters.
+All collection settings are required at runtime: frequency in Hz, sample rate in samples/second, gain in dB, and duration in seconds. Each command then lists detected SDRs and prompts for the EEPROM SDR name(s).
 
 ```bash
-~/.local/bin/collect_dualsdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
-~/.local/bin/collect_dualsdr_dualchannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+~/.local/bin/collect_dualsdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
+~/.local/bin/collect_dualsdr_dualchannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
 ```
 
 Capture files and metadata are saved under `${B220_CAPTURE_DIR:-${B220_USB_MOUNT:-/mnt/usb-hdd}/sdr-captures}`. The IQ file is raw interleaved complex signed 16-bit I/Q (`sc16`/`short`), which is the default output type of `rx_samples_to_file`.
@@ -68,7 +68,7 @@ Capture files and metadata are saved under `${B220_CAPTURE_DIR:-${B220_USB_MOUNT
 From your computer:
 
 ```bash
-ssh <user>@<pi-host> '~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>'
+ssh <user>@<pi-host> '~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>'
 ```
 
 The IQ file remains on the Raspberry Pi. To copy a file back later, use `scp`, for example:

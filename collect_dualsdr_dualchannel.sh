@@ -5,19 +5,17 @@ set -Eeuo pipefail
 # total). UHD names the two outputs from each --file base as _ch0 and _ch1.
 #
 # Usage:
-#   collect_dualsdr_dualchannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+#   collect_dualsdr_dualchannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
 usage() {
-  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>\n' "${0##*/}" >&2
+  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>\n' "${0##*/}" >&2
   exit 2
 }
 
-[[ "$#" -eq 6 ]] || usage
+[[ "$#" -eq 4 ]] || usage
 FREQ="$1"
 RATE="$2"
 GAIN="$3"
 DURATION="$4"
-SDR1_NAME="$5"
-SDR2_NAME="$6"
 
 # Mount the HDD at /mnt/usb-hdd, or set B220_USB_MOUNT to its actual mount point.
 USB_MOUNT="${B220_USB_MOUNT:-/mnt/usb-hdd}"
@@ -65,6 +63,8 @@ echo "=== Attached UHD SDR diagnostic ==="
 DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
 printf '%s\n' "$DEVICE_LIST"
 echo
+read -r -p "Name for SDR 1 (as listed above): " SDR1_NAME
+read -r -p "Name for SDR 2 (as listed above): " SDR2_NAME
 [[ -n "$SDR1_NAME" ]] || die "SDR 1 name cannot be empty."
 [[ -n "$SDR2_NAME" ]] || die "SDR 2 name cannot be empty."
 [[ "$SDR1_NAME" != "$SDR2_NAME" ]] || die "Choose two different SDR names."

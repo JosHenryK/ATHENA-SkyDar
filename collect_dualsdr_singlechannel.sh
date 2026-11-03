@@ -2,19 +2,17 @@
 set -Eeuo pipefail
 
 # Usage:
-#   collect_dualsdr_singlechannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+#   collect_dualsdr_singlechannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>
 usage() {
-  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>\n' "${0##*/}" >&2
+  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s>\n' "${0##*/}" >&2
   exit 2
 }
 
-[[ "$#" -eq 6 ]] || usage
+[[ "$#" -eq 4 ]] || usage
 FREQ="$1"
 RATE="$2"
 GAIN="$3"
 DURATION="$4"
-SDR1_NAME="$5"
-SDR2_NAME="$6"
 
 # Save captures to the attached USB HDD, not the local home directory.
 # Mount the HDD at /mnt/usb-hdd, or set B220_USB_MOUNT to its actual mount point.
@@ -68,13 +66,13 @@ echo "=== Attached UHD SDR diagnostic ==="
 DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
 printf '%s\n' "$DEVICE_LIST"
 echo
+read -r -p "Name for SDR 1 (as listed above): " SDR1_NAME
+read -r -p "Name for SDR 2 (as listed above): " SDR2_NAME
 [[ -n "$SDR1_NAME" ]] || die "SDR 1 name cannot be empty."
 [[ -n "$SDR2_NAME" ]] || die "SDR 2 name cannot be empty."
 [[ "$SDR1_NAME" != "$SDR2_NAME" ]] || die "Choose two different SDR names."
 
 # Confirm both selected names appear in the successful discovery listing.
-# LibreSDR serial-filtered lookup is unreliable on this host, while EEPROM
-# names are valid UHD device selectors.
 grep -Fq "name: $SDR1_NAME" <<< "$DEVICE_LIST" || die "SDR 1 name '$SDR1_NAME' was not listed by uhd_find_devices."
 grep -Fq "name: $SDR2_NAME" <<< "$DEVICE_LIST" || die "SDR 2 name '$SDR2_NAME' was not listed by uhd_find_devices."
 
