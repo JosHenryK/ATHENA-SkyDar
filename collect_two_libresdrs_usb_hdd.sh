@@ -21,6 +21,12 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 COLLECT_DIR="${OUTDIR}/${STAMP}"
 INSTALL_DIR="${HOME}/.local/lib/b220-capture"
 RX_BIN="${INSTALL_DIR}/build/rx_samples_to_file"
+# Homebrew's UHD bottle does not ship the standard image package. Prefer the
+# per-user image directory populated during setup so the script also works in
+# non-interactive SSH sessions that do not source ~/.bashrc.
+if [[ -z "${UHD_IMAGES_DIR:-}" && -d "${HOME}/.local/share/uhd/images" ]]; then
+  export UHD_IMAGES_DIR="${HOME}/.local/share/uhd/images"
+fi
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -55,17 +61,18 @@ echo "=== Attached UHD SDR diagnostic ==="
 DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
 printf '%s\n' "$DEVICE_LIST"
 echo
-read -r -p "Serial number for SDR 1 (as listed above): " SERIAL1
-read -r -p "Serial number for SDR 2 (as listed above): " SERIAL2
+read -r -p "Name for SDR 1 (as listed above): " SDR1_NAME
+read -r -p "Name for SDR 2 (as listed above): " SDR2_NAME
 
-[[ -n "$SERIAL1" ]] || die "SDR 1 serial number cannot be empty."
-[[ -n "$SERIAL2" ]] || die "SDR 2 serial number cannot be empty."
-[[ "$SERIAL1" != "$SERIAL2" ]] || die "Choose two different serial numbers."
+[[ -n "$SDR1_NAME" ]] || die "SDR 1 name cannot be empty."
+[[ -n "$SDR2_NAME" ]] || die "SDR 2 name cannot be empty."
+[[ "$SDR1_NAME" != "$SDR2_NAME" ]] || die "Choose two different SDR names."
 
-# Confirm both selected serials appear in the successful discovery listing.
-# This avoids the failing serial-specific uhd_usrp_probe calls.
-grep -Fq "serial: $SERIAL1" <<< "$DEVICE_LIST" || die "SDR 1 serial '$SERIAL1' was not listed by uhd_find_devices."
-grep -Fq "serial: $SERIAL2" <<< "$DEVICE_LIST" || die "SDR 2 serial '$SERIAL2' was not listed by uhd_find_devices."
+# Confirm both selected names appear in the successful discovery listing.
+# LibreSDR serial-filtered lookup is unreliable on this host, while EEPROM
+# names are valid UHD device selectors.
+grep -Fq "name: $SDR1_NAME" <<< "$DEVICE_LIST" || die "SDR 1 name '$SDR1_NAME' was not listed by uhd_find_devices."
+grep -Fq "name: $SDR2_NAME" <<< "$DEVICE_LIST" || die "SDR 2 name '$SDR2_NAME' was not listed by uhd_find_devices."
 
 mkdir -p "$COLLECT_DIR"
 
@@ -75,19 +82,20 @@ echo "Frequency: $FREQ Hz"
 echo "Sample rate: $RATE samples/s"
 echo "Gain: $GAIN dB"
 echo "Duration: $DURATION seconds"
-echo "USB HDD mount point: $USB_MOUNT"\necho "Collection directory: $COLLECT_DIR"
-echo "SDR 1 serial: $SERIAL1"
-echo "SDR 2 serial: $SERIAL2"
+echo "USB HDD mount point: $USB_MOUNT"
+echo "Collection directory: $COLLECT_DIR"
+echo "SDR 1 name: $SDR1_NAME"
+echo "SDR 2 name: $SDR2_NAME"
 echo
 echo "Starting both captures in parallel..."
 
-OUT1="${COLLECT_DIR}/libresdr_${SERIAL1}.iq"
-OUT2="${COLLECT_DIR}/libresdr_${SERIAL2}.iq"
-LOG1="${COLLECT_DIR}/libresdr_${SERIAL1}.log"
-LOG2="${COLLECT_DIR}/libresdr_${SERIAL2}.log"
+OUT1="${COLLECT_DIR}/libresdr_${SDR1_NAME}.iq"
+OUT2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.iq"
+LOG1="${COLLECT_DIR}/libresdr_${SDR1_NAME}.log"
+LOG2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.log"
 
 "$RX_BIN" \
-  --args="serial=$SERIAL1" \
+  --args="type=b200,name=$SDR1_NAME" \
   --freq "$FREQ" \
   --rate "$RATE" \
   --gain "$GAIN" \
@@ -97,7 +105,7 @@ LOG2="${COLLECT_DIR}/libresdr_${SERIAL2}.log"
 PID1=$!
 
 "$RX_BIN" \
-  --args="serial=$SERIAL2" \
+  --args="type=b200,name=$SDR2_NAME" \
   --freq "$FREQ" \
   --rate "$RATE" \
   --gain "$GAIN" \
@@ -112,25 +120,25 @@ wait "$PID1" || STATUS1=$?
 wait "$PID2" || STATUS2=$?
 
 echo
-echo "=== SDR 1 output (serial=$SERIAL1; exit=$STATUS1) ==="
+echo "=== SDR 1 output (name=$SDR1_NAME; exit=$STATUS1) ==="
 cat "$LOG1"
 echo
-echo "=== SDR 2 output (serial=$SERIAL2; exit=$STATUS2) ==="
+echo "=== SDR 2 output (name=$SDR2_NAME; exit=$STATUS2) ==="
 cat "$LOG2"
 
-[[ "$STATUS1" -eq 0 ]] || die "Capture failed for SDR 1 ($SERIAL1); see $LOG1."
-[[ "$STATUS2" -eq 0 ]] || die "Capture failed for SDR 2 ($SERIAL2); see $LOG2."
+[[ "$STATUS1" -eq 0 ]] || die "Capture failed for SDR 1 ($SDR1_NAME); see $LOG1."
+[[ "$STATUS2" -eq 0 ]] || die "Capture failed for SDR 2 ($SDR2_NAME); see $LOG2."
 [[ -s "$OUT1" ]] || die "SDR 1 capture file is missing or empty: $OUT1"
 [[ -s "$OUT2" ]] || die "SDR 2 capture file is missing or empty: $OUT2"
 
-for pair in "1:$SERIAL1:$OUT1" "2:$SERIAL2:$OUT2"; do
-  IFS=: read -r index serial outfile <<< "$pair"
+for pair in "1:$SDR1_NAME:$OUT1" "2:$SDR2_NAME:$OUT2"; do
+  IFS=: read -r index name outfile <<< "$pair"
   cat > "${outfile}.txt" <<EOF
 frequency_hz=$FREQ
 sample_rate_sps=$RATE
 gain_db=$GAIN
 duration_seconds=$DURATION
-serial_number=$serial
+sdr_name=$name
 file=$outfile
 format=complex_int16_iq
 EOF
@@ -142,8 +150,8 @@ frequency_hz=$FREQ
 sample_rate_sps=$RATE
 gain_db=$GAIN
 duration_seconds=$DURATION
-sdr1_serial=$SERIAL1
-sdr2_serial=$SERIAL2
+sdr1_name=$SDR1_NAME
+sdr2_name=$SDR2_NAME
 capture_mode=parallel
 format=complex_int16_iq
 EOF
