@@ -11,7 +11,9 @@ This repository bootstraps a Raspberry Pi 5 running **Raspberry Pi OS 64-bit** t
 - The B220 Mini FPGA binary from [bkerler/LibreSDR_UHD_B220_Mini_FPGA](https://github.com/bkerler/LibreSDR_UHD_B220_Mini_FPGA)
 - `rx_samples_to_file`, compiled against the Homebrew UHD installation
 - `~/.config/uhd.conf`, selecting the B220 Mini FPGA by device serial
-- `~/.local/bin/b220-capture`
+- `~/.local/bin/collect_singlesdr_singlechannel`
+- `~/.local/bin/collect_dualsdr_singlechannel`
+- `~/.local/bin/collect_dualsdr_dualchannel`
 
 The UHD example is built from the same UHD release as the Homebrew formula (currently pinned to 4.11.0.0 in this starter repository). A Homebrew update may require updating `UHD_VERSION` in `setup.sh` to match the installed formula.
 
@@ -32,36 +34,41 @@ The UHD example is built from the same UHD release as the Homebrew formula (curr
    ```bash
    git clone https://github.com/YOUR_GITHUB_USER/YOUR_REPO.git
    cd YOUR_REPO
-   chmod +x setup.sh collect.sh
+   chmod +x setup.sh collect_*sdr_*channel.sh
    ./setup.sh
    ```
 
-4. When prompted, enter the SDR serial (default: `MAE8DOY`).
+4. Optionally assign distinct EEPROM names to connected SDRs when setup asks.
 5. Connect the SDR and test:
 
    ```bash
    /home/linuxbrew/.linuxbrew/bin/uhd_find_devices
-   /home/linuxbrew/.linuxbrew/bin/uhd_usrp_probe --args serial=MAE8DOY
+   /home/linuxbrew/.linuxbrew/bin/uhd_usrp_probe --args type=b200,name=<sdr_name>
    ```
 
-Replace `MAE8DOY` if you entered another serial during setup.
+Replace `<sdr_name>` with an EEPROM name visible in the discovery listing.
 
 ## Start a capture locally
 
 ```bash
-~/.local/bin/b220-capture 5.1e9 2e5 20 10
+~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>
 ```
 
-Arguments are: frequency in Hz, sample rate in samples/second, gain in dB, duration in seconds. Defaults are `5.1e9 2e5 20 10`.
+All collection parameters are required at runtime: frequency in Hz, sample rate in samples/second, gain in dB, duration in seconds, followed by the EEPROM SDR name(s). The dual-SDR commands take `<sdr1_name> <sdr2_name>` after the first four parameters.
 
-Capture files and metadata are saved under `~/sdr-captures/`. The IQ file is raw interleaved complex signed 16-bit I/Q (`sc16`/`short`), which is the default output type of `rx_samples_to_file`.
+```bash
+~/.local/bin/collect_dualsdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+~/.local/bin/collect_dualsdr_dualchannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+```
+
+Capture files and metadata are saved under `${B220_CAPTURE_DIR:-${B220_USB_MOUNT:-/mnt/usb-hdd}/sdr-captures}`. The IQ file is raw interleaved complex signed 16-bit I/Q (`sc16`/`short`), which is the default output type of `rx_samples_to_file`.
 
 ## Start a capture remotely over SSH
 
 From your computer:
 
 ```bash
-ssh <user>@<pi-host> '~/.local/bin/b220-capture 5.1e9 2e5 20 10'
+ssh <user>@<pi-host> '~/.local/bin/collect_singlesdr_singlechannel <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr_name>'
 ```
 
 The IQ file remains on the Raspberry Pi. To copy a file back later, use `scp`, for example:

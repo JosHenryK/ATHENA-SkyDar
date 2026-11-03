@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Capture both RX channels from each of two LibreSDR B220 Minis (four IQ files
+# total). UHD names the two outputs from each --file base as _ch0 and _ch1.
+#
 # Usage:
-#   ./collect.sh [frequency_hz] [sample_rate_sps] [gain_db] [duration_s]
-# Defaults match the original single-SDR capture script.
-FREQ="${1:-5.1e9}"
-RATE="${2:-2e5}"
-GAIN="${3:-20}"
-DURATION="${4:-10}"
+#   collect_dualsdr_dualchannel.sh <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>
+usage() {
+  printf 'Usage: %s <frequency_hz> <sample_rate_sps> <gain_db> <duration_s> <sdr1_name> <sdr2_name>\n' "${0##*/}" >&2
+  exit 2
+}
 
-# Save captures to the attached USB HDD, not the local home directory.
+[[ "$#" -eq 6 ]] || usage
+FREQ="$1"
+RATE="$2"
+GAIN="$3"
+DURATION="$4"
+SDR1_NAME="$5"
+SDR2_NAME="$6"
+
 # Mount the HDD at /mnt/usb-hdd, or set B220_USB_MOUNT to its actual mount point.
 USB_MOUNT="${B220_USB_MOUNT:-/mnt/usb-hdd}"
 mountpoint -q "$USB_MOUNT" || {
-  printf 'ERROR: USB HDD is not mounted at %s. Mount it first, or set B220_USB_MOUNT.\\n' "$USB_MOUNT" >&2
+  printf 'ERROR: USB HDD is not mounted at %s. Mount it first, or set B220_USB_MOUNT.\n' "$USB_MOUNT" >&2
   exit 1
 }
 OUTDIR="${B220_CAPTURE_DIR:-${USB_MOUNT}/sdr-captures}"
@@ -21,16 +30,15 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 COLLECT_DIR="${OUTDIR}/${STAMP}"
 INSTALL_DIR="${HOME}/.local/lib/b220-capture"
 RX_BIN="${INSTALL_DIR}/build/rx_samples_to_file"
+
 # Homebrew's UHD bottle does not ship the standard image package. Prefer the
-# per-user image directory populated during setup so the script also works in
-# non-interactive SSH sessions that do not source ~/.bashrc.
+# per-user image directory populated during setup so this works over SSH too.
 if [[ -z "${UHD_IMAGES_DIR:-}" && -d "${HOME}/.local/share/uhd/images" ]]; then
   export UHD_IMAGES_DIR="${HOME}/.local/share/uhd/images"
 fi
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-# Find UHD diagnostic tools on common Linuxbrew/Homebrew installations.
 find_tool() {
   local tool="$1"
   if command -v "$tool" >/dev/null 2>&1; then
@@ -48,51 +56,44 @@ find_tool() {
 
 [[ -x "$RX_BIN" ]] || die "Capture executable not found: $RX_BIN. Run setup.sh first."
 
-# Validate inputs as numeric values accepted by UHD; UHD performs final validation.
-for v in "$FREQ" "$RATE" "$GAIN" "$DURATION"; do
-  [[ "$v" =~ ^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]] || die "Invalid numeric argument: $v"
+for value in "$FREQ" "$RATE" "$GAIN" "$DURATION"; do
+  [[ "$value" =~ ^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]] || die "Invalid numeric argument: $value"
 done
 
 UHD_FIND="$(find_tool uhd_find_devices)" || die "uhd_find_devices not found. Ensure UHD is installed and on PATH."
 echo "=== Attached UHD SDR diagnostic ==="
-# Capture the normal, no-arguments discovery output. This is the discovery
-# method confirmed to work on this host; do not run uhd_usrp_probe with
-# serial-specific arguments, which currently fails on this setup.
 DEVICE_LIST="$("$UHD_FIND")" || die "uhd_find_devices failed. Check USB connections and UHD installation."
 printf '%s\n' "$DEVICE_LIST"
 echo
-read -r -p "Name for SDR 1 (as listed above): " SDR1_NAME
-read -r -p "Name for SDR 2 (as listed above): " SDR2_NAME
-
 [[ -n "$SDR1_NAME" ]] || die "SDR 1 name cannot be empty."
 [[ -n "$SDR2_NAME" ]] || die "SDR 2 name cannot be empty."
 [[ "$SDR1_NAME" != "$SDR2_NAME" ]] || die "Choose two different SDR names."
-
-# Confirm both selected names appear in the successful discovery listing.
-# LibreSDR serial-filtered lookup is unreliable on this host, while EEPROM
-# names are valid UHD device selectors.
 grep -Fq "name: $SDR1_NAME" <<< "$DEVICE_LIST" || die "SDR 1 name '$SDR1_NAME' was not listed by uhd_find_devices."
 grep -Fq "name: $SDR2_NAME" <<< "$DEVICE_LIST" || die "SDR 2 name '$SDR2_NAME' was not listed by uhd_find_devices."
 
 mkdir -p "$COLLECT_DIR"
 
+OUT1_BASE="${COLLECT_DIR}/libresdr_${SDR1_NAME}.iq"
+OUT2_BASE="${COLLECT_DIR}/libresdr_${SDR2_NAME}.iq"
+OUT1_CH0="${COLLECT_DIR}/libresdr_${SDR1_NAME}_ch0.iq"
+OUT1_CH1="${COLLECT_DIR}/libresdr_${SDR1_NAME}_ch1.iq"
+OUT2_CH0="${COLLECT_DIR}/libresdr_${SDR2_NAME}_ch0.iq"
+OUT2_CH1="${COLLECT_DIR}/libresdr_${SDR2_NAME}_ch1.iq"
+LOG1="${COLLECT_DIR}/libresdr_${SDR1_NAME}.log"
+LOG2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.log"
+
 echo
-echo "=== Capture configuration ==="
+echo "=== Quad-capture configuration ==="
 echo "Frequency: $FREQ Hz"
-echo "Sample rate: $RATE samples/s"
+echo "Sample rate: $RATE samples/s per channel"
 echo "Gain: $GAIN dB"
 echo "Duration: $DURATION seconds"
 echo "USB HDD mount point: $USB_MOUNT"
 echo "Collection directory: $COLLECT_DIR"
-echo "SDR 1 name: $SDR1_NAME"
-echo "SDR 2 name: $SDR2_NAME"
+echo "SDR 1 name: $SDR1_NAME (channels 0, 1)"
+echo "SDR 2 name: $SDR2_NAME (channels 0, 1)"
 echo
-echo "Starting both captures in parallel..."
-
-OUT1="${COLLECT_DIR}/libresdr_${SDR1_NAME}.iq"
-OUT2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.iq"
-LOG1="${COLLECT_DIR}/libresdr_${SDR1_NAME}.log"
-LOG2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.log"
+echo "Starting both two-channel captures in parallel..."
 
 "$RX_BIN" \
   --args="type=b200,name=$SDR1_NAME" \
@@ -100,7 +101,8 @@ LOG2="${COLLECT_DIR}/libresdr_${SDR2_NAME}.log"
   --rate "$RATE" \
   --gain "$GAIN" \
   --duration "$DURATION" \
-  --file "$OUT1" \
+  --channels "0,1" \
+  --file "$OUT1_BASE" \
   --stats >"$LOG1" 2>&1 &
 PID1=$!
 
@@ -110,7 +112,8 @@ PID1=$!
   --rate "$RATE" \
   --gain "$GAIN" \
   --duration "$DURATION" \
-  --file "$OUT2" \
+  --channels "0,1" \
+  --file "$OUT2_BASE" \
   --stats >"$LOG2" 2>&1 &
 PID2=$!
 
@@ -128,21 +131,29 @@ cat "$LOG2"
 
 [[ "$STATUS1" -eq 0 ]] || die "Capture failed for SDR 1 ($SDR1_NAME); see $LOG1."
 [[ "$STATUS2" -eq 0 ]] || die "Capture failed for SDR 2 ($SDR2_NAME); see $LOG2."
-[[ -s "$OUT1" ]] || die "SDR 1 capture file is missing or empty: $OUT1"
-[[ -s "$OUT2" ]] || die "SDR 2 capture file is missing or empty: $OUT2"
+for output in "$OUT1_CH0" "$OUT1_CH1" "$OUT2_CH0" "$OUT2_CH1"; do
+  [[ -s "$output" ]] || die "Capture file is missing or empty: $output"
+done
 
-for pair in "1:$SDR1_NAME:$OUT1" "2:$SDR2_NAME:$OUT2"; do
-  IFS=: read -r index name outfile <<< "$pair"
+write_metadata() {
+  local sdr_index="$1" sdr_name="$2" channel="$3" outfile="$4"
   cat > "${outfile}.txt" <<EOF
 frequency_hz=$FREQ
 sample_rate_sps=$RATE
 gain_db=$GAIN
 duration_seconds=$DURATION
-sdr_name=$name
+sdr_index=$sdr_index
+sdr_name=$sdr_name
+channel=$channel
 file=$outfile
 format=complex_int16_iq
 EOF
-done
+}
+
+write_metadata 1 "$SDR1_NAME" 0 "$OUT1_CH0"
+write_metadata 1 "$SDR1_NAME" 1 "$OUT1_CH1"
+write_metadata 2 "$SDR2_NAME" 0 "$OUT2_CH0"
+write_metadata 2 "$SDR2_NAME" 1 "$OUT2_CH1"
 
 cat > "${COLLECT_DIR}/collection.txt" <<EOF
 collection_timestamp=$STAMP
@@ -151,12 +162,16 @@ sample_rate_sps=$RATE
 gain_db=$GAIN
 duration_seconds=$DURATION
 sdr1_name=$SDR1_NAME
+sdr1_channels=0,1
 sdr2_name=$SDR2_NAME
-capture_mode=parallel
+sdr2_channels=0,1
+capture_mode=two_sdrs_parallel_two_channels_each
 format=complex_int16_iq
 EOF
 
 echo
-echo "Capture saved in: $COLLECT_DIR"
-ls -lh "$OUT1" "${OUT1}.txt" "$OUT2" "${OUT2}.txt" "${COLLECT_DIR}/collection.txt"
+echo "Quad capture saved in: $COLLECT_DIR"
+ls -lh "$OUT1_CH0" "${OUT1_CH0}.txt" "$OUT1_CH1" "${OUT1_CH1}.txt" \
+  "$OUT2_CH0" "${OUT2_CH0}.txt" "$OUT2_CH1" "${OUT2_CH1}.txt" \
+  "${COLLECT_DIR}/collection.txt"
 echo "Diagnostic logs: $LOG1 and $LOG2"

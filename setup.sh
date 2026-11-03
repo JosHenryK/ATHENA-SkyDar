@@ -15,10 +15,73 @@ INSTALL_DIR="${HOME}/.local/lib/b220-capture"
 BIN_DIR="${HOME}/.local/bin"
 CAPTURE_DIR="${HOME}/sdr-captures"
 DOWNLOADER_VENV="${HOME}/.local/share/uhd-downloader-venv"
+USB_MOUNT="${B220_USB_MOUNT:-/mnt/usb-hdd}"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }
+
+mount_capture_hdd() {
+  local reply device root_source existing_mount
+
+  read -r -p "Mount an external capture HDD at ${USB_MOUNT}? [Y/n]: " reply
+  [[ "${reply,,}" == "n" || "${reply,,}" == "no" ]] && return
+
+  if mountpoint -q "$USB_MOUNT"; then
+    log "Capture HDD is already mounted at ${USB_MOUNT}"
+    return
+  fi
+
+  echo "Available block devices:"
+  lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS
+  read -r -p "HDD partition to mount (for example /dev/sda1; blank skips): " device
+  [[ -n "$device" ]] || return
+  [[ -b "$device" ]] || die "Not a block device: $device"
+
+  root_source="$(findmnt -n -o SOURCE /)"
+  [[ "$device" != "$root_source" ]] || die "Refusing to mount the root filesystem device: $device"
+
+  sudo mkdir -p "$USB_MOUNT"
+  existing_mount="$(findmnt -nr -S "$device" -o TARGET | head -n 1 || true)"
+  if [[ -n "$existing_mount" ]]; then
+    log "Binding existing HDD mount ${existing_mount} to ${USB_MOUNT}"
+    sudo mount --bind "$existing_mount" "$USB_MOUNT"
+  else
+    log "Mounting ${device} at ${USB_MOUNT}"
+    sudo mount "$device" "$USB_MOUNT"
+  fi
+  mountpoint -q "$USB_MOUNT" || die "HDD mount failed: $USB_MOUNT"
+}
+
+flash_sdr_names() {
+  local reply listing serial name
+  local -a serials
+  local burn_tool="$(brew --prefix)/lib/uhd/utils/usrp_burn_mb_eeprom"
+  local find_tool="$(brew --prefix)/bin/uhd_find_devices"
+
+  read -r -p "Program distinct EEPROM names on attached SDRs? [y/N]: " reply
+  [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]] || return
+  [[ -x "$burn_tool" ]] || die "EEPROM utility not found: $burn_tool"
+
+  while :; do
+    echo "Connect exactly one SDR, then press Enter."
+    read -r
+    listing="$("$find_tool")" || die "UHD discovery failed while preparing to program an SDR name."
+    mapfile -t serials < <(awk '/^[[:space:]]*serial:/{print $2}' <<< "$listing")
+    [[ "${#serials[@]}" -eq 1 ]] || die "Expected exactly one SDR; UHD found ${#serials[@]}. Disconnect all but one SDR and rerun setup."
+    serial="${serials[0]}"
+    printf '%s\n' "$listing"
+    read -r -p "Name for SDR serial ${serial} (1-20 letters, numbers, ., _, or -): " name
+    [[ "$name" =~ ^[A-Za-z0-9._-]{1,20}$ ]] || die "Invalid SDR name: $name"
+    read -r -p "Write name '${name}' to SDR ${serial}? [y/N]: " reply
+    [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]] || die "EEPROM name write cancelled."
+    "$burn_tool" --args="type=b200" --values="name=$name"
+    echo "Name written. Disconnect/reconnect that SDR before using it."
+
+    read -r -p "Program another SDR name now? [y/N]: " reply
+    [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]] || break
+  done
+}
 
 [[ "$(id -u)" -ne 0 ]] || die "Run as your normal user, not with sudo."
 [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution."
@@ -124,44 +187,51 @@ cmake -S "$INSTALL_DIR" -B "$BUILD" \
 cmake --build "$BUILD" --parallel 2
 [[ -x "${BUILD}/rx_samples_to_file" ]] || die "Failed to build rx_samples_to_file."
 
-[[ -f "${REPO_DIR}/collect.sh" ]] || die "collect.sh was not found in the repository directory: ${REPO_DIR}"
+for script in \
+  collect_singlesdr_singlechannel.sh \
+  collect_dualsdr_singlechannel.sh \
+  collect_dualsdr_dualchannel.sh; do
+  [[ -f "${REPO_DIR}/${script}" ]] || die "${script} was not found in the repository directory: ${REPO_DIR}"
+done
 
-log "Installing capture command"
-install -m 0755 "${REPO_DIR}/collect.sh" "${BIN_DIR}/b220-capture"
+log "Installing collection commands"
+install -m 0755 "${REPO_DIR}/collect_singlesdr_singlechannel.sh" "${BIN_DIR}/collect_singlesdr_singlechannel"
+install -m 0755 "${REPO_DIR}/collect_dualsdr_singlechannel.sh" "${BIN_DIR}/collect_dualsdr_singlechannel"
+install -m 0755 "${REPO_DIR}/collect_dualsdr_dualchannel.sh" "${BIN_DIR}/collect_dualsdr_dualchannel"
 
-# Persist the FPGA path and selected serial in UHD's per-user config.
-SERIAL="${B220_SERIAL:-}"
-if [[ -z "$SERIAL" ]]; then
-  read -r -p "SDR serial number [MAE8DOY]: " SERIAL
-  SERIAL="${SERIAL:-MAE8DOY}"
-fi
-[[ "$SERIAL" =~ ^[A-Za-z0-9._-]+$ ]] || die "Unexpected serial number format: $SERIAL"
+# Persist the FPGA path for every B200-family SDR. This avoids relying on
+# serial-filtered lookup, which is unreliable on the LibreSDR B220 Mini.
 mkdir -p "${HOME}/.config"
 UHD_CONF="${HOME}/.config/uhd.conf"
 if [[ -f "$UHD_CONF" ]]; then
   cp "$UHD_CONF" "${UHD_CONF}.backup.$(date +%Y%m%d%H%M%S)"
 fi
 cat > "$UHD_CONF" <<EOF
-[serial=${SERIAL}]
+[type=b200]
 fpga=${FPGA_IMAGE}
 EOF
+
+mount_capture_hdd
 
 log "Checking UHD installation"
 "$(brew --prefix)/bin/uhd_config_info" --version || true
 "$(brew --prefix)/bin/uhd_find_devices" || true
+flash_sdr_names
 
 echo
 echo "Setup completed."
 echo "Homebrew UHD: $(brew --prefix uhd)"
-echo "Capture command: ${BIN_DIR}/b220-capture"
+echo "Collection commands:"
+echo "  ${BIN_DIR}/collect_singlesdr_singlechannel"
+echo "  ${BIN_DIR}/collect_dualsdr_singlechannel"
+echo "  ${BIN_DIR}/collect_dualsdr_dualchannel"
 echo "Capture folder: ${CAPTURE_DIR}"
-echo "Configured SDR serial: ${SERIAL}"
+echo "Capture HDD mount point: ${USB_MOUNT}"
 echo "FPGA image: ${FPGA_IMAGE}"
 echo
-echo "If the SDR was connected during setup, test it with:"
-echo "  $(brew --prefix)/bin/uhd_usrp_probe --args serial=${SERIAL}"
+echo "Test an SDR by its EEPROM name (for example):"
+echo "  $(brew --prefix)/bin/uhd_usrp_probe --args type=b200,name=skydar-1"
 echo
-echo "Start a capture over SSH with:"
-echo "  ssh <user>@<pi-host> '${BIN_DIR}/b220-capture 5.1e9 2e5 20 10'"
+echo "Run a collection command with its required runtime parameters; use --help-equivalent usage output by invoking it with no arguments."
 echo
 echo "If the SDR was not connected, plug it in and run the probe command above."
